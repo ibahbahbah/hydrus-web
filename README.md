@@ -28,12 +28,6 @@ It hosts Hydrus Web on port 80 using nginx. Hydrus Web needs to be hosted with v
 
 You may also want to run [Hydrus on Docker](https://hydrusnetwork.github.io/hydrus/docker.html).
 
-## Hydrus API HTTPS
-
-Unless you are opening Hydrus Web on the same device the Hydrus client is running on, you will need to make its API available with valid HTTPS. This will likely mean running some form of reverse proxy.
-
-There are some guides on doing this on the [wiki](https://github.com/floogulinc/hydrus-web/wiki).
-
 ## Hydrus Version Support
 
 The minimum required versions of the Hydrus client for Hydrus Web are:
@@ -59,16 +53,19 @@ Run `ng generate component component-name` to generate a new component. You can 
 
 ### Build
 
-Run `ng build` to build the project. The build artifacts will be stored in the `dist/` directory. Use the `--prod` flag for a production build.
+Run `ng build` to build the project. The build artifacts will be stored in the `dist/` directory. Use `--configuration=production` flag for a production build (Set as Default).
 
-### Running unit tests
+### Run Locally
 
-Run `ng test` to execute the unit tests via [Karma](https://karma-runner.github.io).
-
-### Running end-to-end tests
-
-Run `ng e2e` to execute the end-to-end tests via [Protractor](http://www.protractortest.org/).
+Install `npm install -g http-server` then run with `http-server "<PATH/TO/dist/index.html>" --port <PORT>`. Port defaults to 8080 if not set. 
+* Use [Tailscale](https://tailscale.com/) to server set up the server to work on other devices. 
 
 ### Further help
 
 To get more help on the Angular CLI use `ng help` or go check out the [Angular CLI README](https://github.com/angular/angular-cli/blob/master/README.md).
+
+## Hydrus API HTTPS
+
+Unless you are opening Hydrus Web on the same device the Hydrus client is running on, you will need to make its API available with valid HTTPS. This will likely mean running some form of reverse proxy.
+
+There are some guides on doing this on the [wiki](https://github.com/floogulinc/hydrus-web/wiki).

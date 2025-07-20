@@ -31,8 +31,8 @@ export type AppSettings = Omit<AppSettingsStorage, "version">;
 export const defaultAppSettings: AppSettings = {
   browseSearchOnLoad: true,
   browseSearchWhenEmpty: true,
-  browseDefaultSearchTags: [],
-  favoriteTags: [],
+  browseDefaultSearchTags: ["system:limit is 200"],
+  favoriteTags: ["system:rating for favourites is like", "system:no rating for favourites", "system:ratio is portrait"],
   hyshareUrl: '',
   saucenaoApiKey: '',
   saucenaoSearchProxy: '/__saucenao-search',

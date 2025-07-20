@@ -8,12 +8,17 @@ import { MatBottomSheet } from '@angular/material/bottom-sheet';
 import { FileInfoSheetComponent } from './file-info-sheet/file-info-sheet.component';
 import { Location } from '@angular/common';
 import { HydrusFileDownloadService } from './hydrus-file-download.service';
-import { take } from 'rxjs';
+import { BehaviorSubject, firstValueFrom, map, take } from 'rxjs';
 import { canOpenInPhotopea, getPhotopeaUrlForFile } from './photopea';
 import { SettingsService } from './settings.service';
 import { MatButton } from '@angular/material/button';
 import { ThemeService } from './theme/theme.service';
 import { HydrusViewsService } from './hydrus-views.service';
+import { HydrusRatingsService } from './hydrus-ratings.service';
+import { ErrorService } from './error.service';
+import { HydrusServiceType } from './hydrus-services';
+import { HydrusFilesService } from './hydrus-files.service';
+import { MatSnackBar } from '@angular/material/snack-bar';
 
 
 function isContentType(content: Content | Slide, type: string) {
@@ -24,7 +29,6 @@ function isContentType(content: Content | Slide, type: string) {
   providedIn: 'root'
 })
 export class PhotoswipeService {
-
   constructor(
     public platform: Platform,
     private bottomSheet: MatBottomSheet,
@@ -32,10 +36,28 @@ export class PhotoswipeService {
     private downloadService: HydrusFileDownloadService,
     private settingsService: SettingsService,
     private appRef: ApplicationRef,
+    private snackbar: MatSnackBar,
     private injector: EnvironmentInjector,
     private themeService: ThemeService,
-    private viewsService: HydrusViewsService
+    private viewsService: HydrusViewsService,
+    private ratingsService: HydrusRatingsService,
+    private errorService: ErrorService,
+    private filesService: HydrusFilesService
   ) { }
+
+  // Add this property at the class level
+  private readonly DOUBLE_TAP_DELAY = 300;
+  private lastTap = 0;
+  private lastClick = 0;
+
+  // For some reason adding this fixes the issue of the icon ordering bug
+  likeService$ = this.ratingsService.ratingServices$.pipe(
+    take(1),
+    map(services => services.find(service => 
+      service.type === HydrusServiceType.LOCAL_RATING_LIKE || 
+      service.type === HydrusServiceType.RATING_LIKE_REPOSITORY
+    ))
+  ).subscribe()
 
   private processedFiles = new Map<string, SlideData>();
 
@@ -68,11 +90,12 @@ export class PhotoswipeService {
       arrowNext: false,
       zoom: false,
       close: false,
-      //secondaryZoomLevel: 1,
       maxZoomLevel: 2,
-      //tapAction: null,
       errorMsg: 'The file cannot be loaded',
-      trapFocus: false
+      trapFocus: false,
+      // imageClickAction: false,
+      // tapAction: false, // Disable default tap action
+      // doubleTapAction: false, // Disable default double tap zoom action
     }
 
     const pswp = new PhotoSwipe(options);
@@ -88,33 +111,6 @@ export class PhotoswipeService {
       }
       return this.getPhotoSwipeItem(items[index]);
     });
-
-/*     pswp.addFilter('useContentPlaceholder', (useContentPlaceholder, content) => {
-      if(isContentType(content, 'video')) {
-        //return true;
-      }
-      return useContentPlaceholder;
-    }); */
-
-/*     const _getVerticalDragRatio = (panY) => {
-      return (panY - pswp.currSlide.bounds.center.y)
-              / (pswp.viewportSize.y / 3);
-    } */
-
-/*     pswp.on('verticalDrag', (e) => {
-      // triggered when using vertical drag to close gesture
-      // can be default prevented
-      console.log('verticalDrag', e.panY);
-      //pswp.element.classList.add('pswp--ui-visible')
-      const drag = 1 - Math.abs(_getVerticalDragRatio(e.panY));
-      console.log(drag);
-      if(pswp.element.classList.contains('pswp--ui-visible') && drag < 0.95) {
-        pswp.element.classList.remove('pswp--ui-visible')
-      } else if (!pswp.element.classList.contains('pswp--ui-visible') && drag >= 0.95) {
-        pswp.element.classList.add('pswp--ui-visible')
-      }
-    }); */
-
 
     pswp.on('wheel', (e) => {
       const event = e.originalEvent;
@@ -141,7 +137,6 @@ export class PhotoswipeService {
           pswp.close();
         }
       };
-
     });
 
     pswp.on('keydown', (e) => {
@@ -151,6 +146,35 @@ export class PhotoswipeService {
     });
 
     pswp.on('uiRegister', () => {
+      //
+      this.ratingsService.ratingServices$.pipe(
+        take(1),
+        map(services => services.find(service => 
+          service.type === HydrusServiceType.LOCAL_RATING_LIKE || 
+          service.type === HydrusServiceType.RATING_LIKE_REPOSITORY
+        ))
+      ).subscribe(likeService => {
+        pswp.ui.registerElement({
+          name: 'like-rating',
+          order: 19, // Before download button
+          isButton: true,
+          tagName: 'button',
+          // html: '<span class="mat-icon material-icons">favorite_outline</span>',
+          html: '<span class="mat-icon material-icons pswp__button--large pswp__icon--large">favorite_outline</span>', // Add large icon class
+          onInit: (el, pswp) => {
+            // Update icon when slide changes
+            pswp.on('change', () => {
+              const file = pswp.currSlide.data.file as HydrusBasicFile;
+              this.updateLikeButtonState(file, likeService.service_key, el);
+            });
+          },
+          onClick: async (event, el, pswp) => {
+            const file = pswp.currSlide.data.file as HydrusBasicFile;
+            await this.toggleLikeRating(file, likeService, el);
+          }
+        });
+      });
+
       pswp.ui.registerElement({
         name: 'info',
         order: 15,
@@ -226,8 +250,6 @@ export class PhotoswipeService {
     pswp.addFilter('uiElement', (element, data) => {
       return element;
     });
-
-
 
     pswp.on('contentLoad', (e) => {
       const { content, isLazy } = e;
@@ -517,4 +539,73 @@ export class PhotoswipeService {
       })
   }
 
+  private async getCurrentRating(file: HydrusBasicFile, serviceKey: string): Promise<boolean> {
+    try {
+      const fileInfo = await firstValueFrom(this.filesService.getFileByHash(file.hash));
+      if ('ratings_array' in fileInfo && Array.isArray(fileInfo.ratings_array)) {
+        const rating = fileInfo.ratings_array.find(r => r.service_key === serviceKey);
+        // Only return true if we explicitly have a true value
+        return rating?.value === true;
+      }
+      return false;
+    } 
+    catch (error) {
+      this.errorService.handleHydrusError(error);
+      return false;
+    }
+  }
+
+  private async toggleLikeRating(file: HydrusBasicFile, likeService: { service_key: string }, buttonElement?) {
+    try {
+      // Get current rating state
+      const currentRating = await this.getCurrentRating(file, likeService.service_key);
+      const newRating = currentRating ? null : true;
+      
+      // Update rating in backend
+      await firstValueFrom(this.ratingsService.setRating(file.hash, likeService.service_key, newRating));
+      
+      // Show feedback message
+      this.snackbar.open(
+        newRating ? 'Added to favorites' : 'Removed from favorites',
+        undefined,
+        { duration: 2000 }
+      );
+
+      // Update button icon if it exists
+      if (buttonElement) {
+        const icon = buttonElement.querySelector('.mat-icon');
+        if (icon) {
+          icon.textContent = newRating ? 'favorite' : 'favorite_outline';
+        }
+      }
+      return newRating;
+    } catch (error) {
+      this.errorService.handleHydrusError(error);
+      return null;
+    }
+}
+
+  private async updateLikeButtonState(file: HydrusBasicFile, serviceKey: string, buttonElement: HTMLElement) {
+    try {
+      const icon = buttonElement.querySelector('.mat-icon');
+      if (!icon) return;
+
+      // Show loading state
+      icon.textContent = 'sync';
+      
+      const isLiked = await this.getCurrentRating(file, serviceKey);
+      
+      // Update icon only if element still exists
+      if (buttonElement.isConnected) {
+        icon.textContent = isLiked ? 'favorite' : 'favorite_outline';
+      }
+    } catch (error) {
+      this.errorService.handleHydrusError(error);
+      // Set to default state on error
+      const icon = buttonElement.querySelector('.mat-icon');
+      if (icon && buttonElement.isConnected) {
+        icon.textContent = 'favorite_outline';
+      }
+    }
+  }
 }

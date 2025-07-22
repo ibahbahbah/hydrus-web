@@ -58,7 +58,7 @@ Run `ng build` to build the project. The build artifacts will be stored in the `
 ### Run Locally
 
 Install `npm install -g http-server` then run with `http-server "<PATH/TO/dist/index.html>" --port <PORT>`. Port defaults to 8080 if not set. 
-* Use [Tailscale](https://tailscale.com/) to server set up the server to work on other devices. 
+* Use [Tailscale](https://tailscale.com/) to set up the server to work on other devices. 
 
 ### Further help
 

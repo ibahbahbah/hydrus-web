@@ -1,22 +1,37 @@
+ARG NODE_VERSION=lts-alpine
+# ARG NGINX_VERSION=1.28.0
+
 # Build the client files in a build stage
-FROM node:lts-alpine as build
+FROM node:${NODE_VERSION} AS builder
+
+#
 RUN apk add --no-cache git
 
+# Set the working directory inside the container
 WORKDIR /app
 
-# Install npm dependencies
-COPY patches /app/patches/
-COPY package*.json .npmrc /app/
-RUN npm ci
+# Copy package-related files first
+COPY  package.json package-lock.json .npmrc ./
 
-# Build the Angular project
-COPY . /app
-RUN npm run docker-build
+# Install project dependencies using npm ci (ensures a clean, reproducible install)
+RUN --mount=type=cache,target=/root/.npm npm ci
 
-FROM nginx:alpine
+# Copy the rest of the application source code into the container
+COPY . .
 
-# Copy in nginx config
-COPY nginx/default.conf /etc/nginx/conf.d/
+# Build the Angular application
+RUN npm run build
 
-# Copy in the built Angular app from the build stage
-COPY --from=build /app/dist/hydrus-web /usr/share/nginx/html
+FROM alpine:latest AS output
+
+# Install rsync for file operations (optional, can use cp)
+RUN apk add --no-cache rsync
+
+# Create output directory
+RUN mkdir -p /usr/share/nginx/html
+
+COPY --from=builder /app/dist/hydrus-web /usr/share/nginx/html
+
+VOLUME [ "/usr/share/nginx/html" ]
+
+EXPOSE 8000

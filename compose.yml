@@ -1,5 +1,5 @@
 services:
-  angular-builder:
+  hydrus-web-builder:
     build:
       context: .
       dockerfile: Dockerfile

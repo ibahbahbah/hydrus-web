@@ -1,20 +1,8 @@
-node_modules
-npm-debug.log
-docker-compose*
-.dockerignore
-Dockerfile*
-README.md
-LICENSE
-.vscode
-.angular/cache
-.sass-cache
-dist/node_modules
-dist/npm-debug.log
-
 # ================================
 # Node and build output
 # ================================
 node_modules
+npm-debug.log
 dist
 out-tsc
 .angular
@@ -57,6 +45,7 @@ Thumbs.db
 # .git
 # .gitignore
 README.md
+LICENSE
 
 # ================================
 # Docker & local orchestration
@@ -64,6 +53,8 @@ README.md
 Dockerfile
 Dockerfile.*
 .dockerignore
+compose.yml
+compose*.yml
 docker-compose.yml
 docker-compose*.yml
 

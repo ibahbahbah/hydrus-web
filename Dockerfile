@@ -1,5 +1,5 @@
 ARG NODE_VERSION=lts-alpine
-# ARG NGINX_VERSION=1.28.0
+ARG NGINX_VERSION=alpine
 
 # Build the client files in a build stage
 FROM node:${NODE_VERSION} AS builder
@@ -22,16 +22,23 @@ COPY . .
 # Build the Angular application
 RUN npm run build
 
-FROM alpine:latest AS output
+FROM nginx:alpine
 
 # Install rsync for file operations (optional, can use cp)
 RUN apk add --no-cache rsync
 
 # Create output directory
-RUN mkdir -p /usr/share/nginx/html
+RUN mkdir -p /usr/share/nginx/html/hydrus-web
 
-COPY --from=builder /app/dist/hydrus-web /usr/share/nginx/html
+# Copy in nginx config
+COPY nginx/default.conf /etc/nginx/conf.d/
 
-VOLUME [ "/usr/share/nginx/html" ]
+# Copy in the built Angular app from the build stage
+COPY --from=builder /app/dist/hydrus-web /usr/share/nginx/html/hydrus-web
 
-EXPOSE 8000
+# Note: The default NGINX container now listens on port 8080 instead of 80 
+EXPOSE 8080
+
+# Start Nginx directly with custom config
+ENTRYPOINT ["nginx", "-c", "/etc/nginx/nginx.conf"]
+CMD ["nginx", "-g", "daemon off;"]

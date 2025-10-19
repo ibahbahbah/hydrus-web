@@ -1,4 +1,5 @@
-import { HydrusSearchTags } from "./hydrus-tags";
+import { HydrusSearchTag, HydrusSearchTags } from "./hydrus-tags";
+import { HydrusService } from "./hydrus-services";
 import { SettingsThemeVariant } from "./theme/theme";
 
 export interface AppSettingsV1 {
@@ -23,6 +24,8 @@ export interface AppSettingsV1 {
   themeColor: string;
   themeVariant: SettingsThemeVariant;
   sendViews: boolean;
+  doubleTapTag: HydrusSearchTags;
+  doubleTapServiceKey: string;
 }
 
 export type AppSettingsStorage = AppSettingsV1;
@@ -49,4 +52,6 @@ export const defaultAppSettings: AppSettings = {
   themeColor: '#3f51b5',
   themeVariant: SettingsThemeVariant.DEFAULT,
   sendViews: true,
+  doubleTapTag: ['i like'],
+  doubleTapServiceKey: '',
 }

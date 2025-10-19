@@ -20,7 +20,20 @@
     <mat-slide-toggle color="primary" formControlName="browseSearchOnLoad" class="margin-bottom-16">Search immediately on the browse page</mat-slide-toggle>
     <mat-slide-toggle color="primary" formControlName="browseSearchWhenEmpty" class="margin-bottom-16">Search with no tags entered</mat-slide-toggle>
     <app-tag-input formControlName="browseDefaultSearchTags" placeholder="Browse page default search" [enableSiblingParentsDialog]="false" class=""></app-tag-input>
-    <app-tag-input formControlName="favoriteTags" [enableFavorites]="false" [enableOrSearch]="false" [enableSiblingParentsDialog]="false" placeholder="Favorite tags" class=""></app-tag-input>
+    <app-tag-input formControlName="favoriteTags" [enableFavorites]="true" [enableOrSearch]="false" [enableSiblingParentsDialog]="false" placeholder="Favorite tags" class=""></app-tag-input>
+    <h2 class="mat-headline-6">Douple Tap (Photoswipe)</h2>
+    <app-tag-input formControlName="doubleTapTag" [enableFavorites]="false" [enableOrSearch]="false" [enableSiblingParentsDialog]="false" placeholder="Double tap tag" class=""></app-tag-input>
+    <mat-form-field appearance="outline">
+      <mat-label>Double Tap Tag Service</mat-label>
+      <mat-select formControlName="doubleTapServiceKey">
+        <mat-option>None (disabled)</mat-option>
+        @for (service of (apiSettings.apiSet() ? (tagServices$ | async) : []); track service.service_key) {
+          <mat-option [value]="service.service_key">
+            {{service.name}}
+          </mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
     <h2 class="mat-headline-6">File Viewing</h2>
     <mat-slide-toggle color="primary" formControlName="mediaAutoplay" class="margin-bottom-16">Autoplay video and audio files</mat-slide-toggle>
     <mat-slide-toggle color="primary" formControlName="mediaLoop" class="margin-bottom-16">Loop video and audio files</mat-slide-toggle>

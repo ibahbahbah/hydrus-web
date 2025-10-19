@@ -7,18 +7,19 @@ import Slide from 'photoswipe/dist/types/slide/slide';
 import { MatBottomSheet } from '@angular/material/bottom-sheet';
 import { FileInfoSheetComponent } from './file-info-sheet/file-info-sheet.component';
 import { Location } from '@angular/common';
-import { HydrusFileDownloadService } from './hydrus-file-download.service';
-import { BehaviorSubject, firstValueFrom, map, take } from 'rxjs';
+import { firstValueFrom, map, take } from 'rxjs';
 import { canOpenInPhotopea, getPhotopeaUrlForFile } from './photopea';
 import { SettingsService } from './settings.service';
 import { MatButton } from '@angular/material/button';
 import { ThemeService } from './theme/theme.service';
+import { ErrorService } from './error.service';
+import { MatSnackBar } from '@angular/material/snack-bar';
+import { HydrusTagsService } from './hydrus-tags.service';
 import { HydrusViewsService } from './hydrus-views.service';
 import { HydrusRatingsService } from './hydrus-ratings.service';
-import { ErrorService } from './error.service';
 import { HydrusServiceType } from './hydrus-services';
 import { HydrusFilesService } from './hydrus-files.service';
-import { MatSnackBar } from '@angular/material/snack-bar';
+import { HydrusFileDownloadService } from './hydrus-file-download.service';
 
 
 function isContentType(content: Content | Slide, type: string) {
@@ -33,22 +34,20 @@ export class PhotoswipeService {
     public platform: Platform,
     private bottomSheet: MatBottomSheet,
     private location: Location,
-    private downloadService: HydrusFileDownloadService,
     private settingsService: SettingsService,
     private appRef: ApplicationRef,
     private snackbar: MatSnackBar,
     private injector: EnvironmentInjector,
     private themeService: ThemeService,
-    private viewsService: HydrusViewsService,
-    private ratingsService: HydrusRatingsService,
     private errorService: ErrorService,
-    private filesService: HydrusFilesService
+    private viewsService: HydrusViewsService,
+    private filesService: HydrusFilesService,
+    private tagsService: HydrusTagsService,
+    private ratingsService: HydrusRatingsService,
+    private downloadService: HydrusFileDownloadService,
   ) { }
 
-  // Add this property at the class level
-  private readonly DOUBLE_TAP_DELAY = 300;
-  private lastTap = 0;
-  private lastClick = 0;
+  
 
   // For some reason adding this fixes the issue of the icon ordering bug
   likeService$ = this.ratingsService.ratingServices$.pipe(
@@ -95,7 +94,6 @@ export class PhotoswipeService {
       trapFocus: false,
       // imageClickAction: false,
       // tapAction: false, // Disable default tap action
-      // doubleTapAction: false, // Disable default double tap zoom action
     }
 
     const pswp = new PhotoSwipe(options);
@@ -131,6 +129,34 @@ export class PhotoswipeService {
       }
     });
 
+    pswp.on('doubleTapAction', async (e) => {
+      // Double tap to add tag to current image
+      e.preventDefault();
+      const file = pswp.currSlide.content.data.file as HydrusBasicFile;
+      const tag = this.settingsService.appSettings.doubleTapTag[0].toString()
+      const serviceKey = this.settingsService.appSettings.doubleTapServiceKey.toString()
+      // console.log(file.hash, tag, serviceKey)
+      try {
+        await firstValueFrom(this.tagsService.addTagsToService(file.hash, [tag], serviceKey));
+        const snackbarRef = this.snackbar.open(
+          `Added tag: '${tag}'`,
+          'Undo',
+          { duration: 2000 }
+        );
+        snackbarRef.onAction().subscribe(async () => {
+          await firstValueFrom(this.tagsService.deleteTagsFromLocalService(file.hash, [tag], serviceKey))
+          this.snackbar.open(
+            `Removed tag: '${tag}'`,
+            undefined,
+            { duration: 2000 }
+          );
+        })
+      } catch (error) {
+        this.errorService.displayError(error);
+      } 
+
+    });
+
     pswp.on('bindEvents', () => {
       pswp.scrollWrap.onauxclick = (event: MouseEvent) => {
         if (event.button === 1) {
@@ -153,10 +179,9 @@ export class PhotoswipeService {
           service.type === HydrusServiceType.LOCAL_RATING_LIKE || 
           service.type === HydrusServiceType.RATING_LIKE_REPOSITORY
         ))
-      ).subscribe(likeService => {
-        pswp.ui.registerElement({
+      ).subscribe(likeService => { pswp.ui.registerElement({
           name: 'like-rating',
-          order: 19, // Before download button
+          order: 10, // Before download button
           isButton: true,
           tagName: 'button',
           // html: '<span class="mat-icon material-icons">favorite_outline</span>',
@@ -235,7 +260,7 @@ export class PhotoswipeService {
         className: 'pswp__zoom-level',
         onInit: (el, pswp) => {
           pswp.on('zoomPanUpdate', (e) => {
-            if (e.slide === pswp.currSlide) {
+            if (e.slide === pswp.currSlide )  {
               if(pswp.currSlide.isZoomable()) {
                 el.innerText = `${Math.round(pswp.currSlide.currZoomLevel * (window.devicePixelRatio ?? 1) * 100)}%`;
               } else {
@@ -255,7 +280,9 @@ export class PhotoswipeService {
       const { content, isLazy } = e;
       const file = content.data.file as HydrusBasicFile;
 
-       if(isContentType(content, 'video')) {
+      console.log(`Loaded Content: ${file.file_url}`)
+
+      if (isContentType(content, 'video')) {
         e.preventDefault();
 
         content.state = 'loading';
@@ -264,9 +291,9 @@ export class PhotoswipeService {
         content.element.className = 'pswp-video-container';
         const img = document.createElement('img');
         img.src = file.thumbnail_url;
-        img.className = 'pswp-video-placeholder'
+        img.className = 'pswp-video-placeholder';
         content.element.append(img);
-      } else if(isContentType(content, 'audio')) {
+      } else if (isContentType(content, 'audio')) {
         e.preventDefault();
 
         content.state = 'loading';
@@ -295,8 +322,6 @@ export class PhotoswipeService {
         this.addRenderButton(file, errorMsgEl, pswp, content);
 
         this.addPhotopeaButton(file, errorMsgEl);
-
-
       } else if (isContentType(content, 'unsupported')) {
         e.preventDefault();
         content.element = document.createElement('div');
@@ -317,15 +342,18 @@ export class PhotoswipeService {
         errorMsgEl.appendChild(errorMsgText);
 
         this.addPhotopeaButton(file, errorMsgEl);
-
       }
 
     });
 
     pswp.on('contentActivate', ({content}) => {
       handleView(content.data.file);
+
+      const file = content.data.file as HydrusBasicFile;
+
+      console.log(`Loaded Content: ${file}`)
+
       if (isContentType(content, 'video') && content.element) {
-        const file = content.data.file as HydrusBasicFile;
         const vid = document.createElement('video');
         vid.src = file.file_url;
         vid.autoplay = this.settingsService.appSettings.mediaAutoplay;
@@ -342,7 +370,6 @@ export class PhotoswipeService {
         }
         content.element.prepend(vid);
       } else if (isContentType(content, 'audio') && content.element) {
-        const file = content.data.file as HydrusBasicFile;
         const audio = document.createElement('audio');
         audio.src = file.file_url;
         audio.autoplay = this.settingsService.appSettings.mediaAutoplay;
@@ -568,7 +595,7 @@ export class PhotoswipeService {
       this.snackbar.open(
         newRating ? 'Added to favorites' : 'Removed from favorites',
         undefined,
-        { duration: 2000 }
+        { duration: 1000 }
       );
 
       // Update button icon if it exists

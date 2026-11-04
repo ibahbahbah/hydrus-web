@@ -2,13 +2,14 @@ import { Component, Inject, OnInit } from '@angular/core';
 import { MatDialog, MatDialogConfig, MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { HydrusSearchTags, TagDisplayType } from '../hydrus-tags';
 
-interface TagInputDialogData {
+export interface TagInputDialogData {
   displayType: TagDisplayType;
   enableOrSearch: boolean;
   enableSystemPredicates: boolean;
   enableFavorites: boolean;
   title: string;
   submitButtonText: string;
+  initialTags?: HydrusSearchTags;
 }
 
 const defaultData: TagInputDialogData = {
@@ -36,6 +37,7 @@ export class TagInputDialogComponent implements OnInit {
     if(!data) {
       this.data = defaultData;
     }
+    this.tags = [...(this.data.initialTags ?? [])];
   }
 
   ngOnInit(): void {

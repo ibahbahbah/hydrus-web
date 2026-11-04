@@ -23,6 +23,8 @@
           class="theming tag-chip tag-color"
           [removable]="true"
           (removed)="removeSearchTag(i)"
+          [matMenuTriggerFor]="orSearchMenu"
+          [matMenuTriggerData]="{index: i}"
         >
           <div class="tag-chip-text">{{$any(tag) | flatten | join:' OR '}}</div>
           <button matChipRemove>
@@ -121,6 +123,15 @@
   </mat-menu>
 </mat-form-field>
 
+
+<mat-menu #orSearchMenu="matMenu">
+  <ng-template matMenuContent let-index="index">
+    <button mat-menu-item (click)="editOrSearch(index)">
+      <mat-icon>edit</mat-icon>
+      <span>Edit OR Search</span>
+    </button>
+  </ng-template>
+</mat-menu>
 
 <mat-menu #tagMenu="matMenu">
   <ng-template matMenuContent let-tag="tag">

@@ -242,6 +242,29 @@ export class TagInputComponent implements OnInit, ControlValueAccessor {
 
   }
 
+  async editOrSearch(index: number) {
+    const searchTag = this.searchTags[index];
+    if (!Array.isArray(searchTag)) {
+      return;
+    }
+
+    const dialogRef = TagInputDialogComponent.open(this.dialog, {
+      displayType: this.displayType,
+      enableOrSearch: false,
+      enableSystemPredicates: this.enableSystemPredicates,
+      enableFavorites: this.enableFavorites,
+      title: 'Edit',
+      submitButtonText: 'Save',
+      initialTags: searchTag,
+    });
+
+    const result = await firstValueFrom(dialogRef.afterClosed());
+    if (result && result.length > 0) {
+      this.searchTags[index] = result;
+      this.tags.emit(this.searchTags);
+    }
+  }
+
   isConvertedPredicateSingle(p: ConvertedPredicate | ConvertedPredicateGroup): p is ConvertedPredicate {
     return 'predicate' in p;
   }

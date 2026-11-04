@@ -253,7 +253,7 @@ export class TagInputComponent implements OnInit, ControlValueAccessor {
       enableOrSearch: false,
       enableSystemPredicates: this.enableSystemPredicates,
       enableFavorites: this.enableFavorites,
-      title: 'Edit',
+      title: 'Edit OR Search',
       submitButtonText: 'Save',
       initialTags: searchTag,
     });

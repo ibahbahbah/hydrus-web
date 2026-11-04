@@ -28,6 +28,9 @@
 .pswp-video {
   width: 100%;
   height: 100%;
+  object-fit: contain;
+  transform: translateZ(0);
+  backface-visibility: hidden;
   &:focus {
     outline: none;
   }
@@ -67,6 +70,10 @@
   display: block;
 }
 
+.pswp__img{
+  -webkit-touch-callout: none;
+}
+
 .pswp__button {
   width: 40px;
   .material-icons {
@@ -97,6 +104,18 @@
 .pswp__top-bar {
   padding-left: 16px;
   padding-right: 16px;
+}
+
+.quick-tag-dialog {
+  .mat-mdc-dialog-surface {
+    overflow: hidden;
+  }
+  .mat-mdc-dialog-content {
+    min-height: 0;
+    max-height: none;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 

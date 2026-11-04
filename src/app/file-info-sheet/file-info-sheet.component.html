@@ -107,7 +107,9 @@
       </mat-list-item>
     </mat-list>
     <mat-accordion multi>
-      <mat-expansion-panel>
+      
+      <!-- URLs -->
+      <!-- <mat-expansion-panel>
         <mat-expansion-panel-header>
           Known URLs ({{file.known_urls.length}})
         </mat-expansion-panel-header>
@@ -129,7 +131,9 @@
         <mat-action-row>
           <button mat-button (click)="addUrlDialog()">Add URL</button>
         </mat-action-row>
-      </mat-expansion-panel>
+      </mat-expansion-panel> -->
+      
+      <!-- Ratings -->
       @if (file.ratings_array && file.ratings_array.length > 0) {
         <mat-expansion-panel>
           <mat-expansion-panel-header>
@@ -175,33 +179,8 @@
         </mat-expansion-panel>
       }
     </mat-accordion>
-    @if (file.notesMapArray) {
-      <div class="notes-section">
-        <div class="sec-header">
-          <h3 class="mat-subheading-2">Notes</h3>
-          <button mat-icon-button (click)="addNoteDialog()" matTooltip="Add note"><mat-icon>note_add</mat-icon></button>
-        </div>
-        <mat-accordion multi>
-          @for (note of file.notesMapArray; track note.name) {
-            <mat-expansion-panel >
-              <mat-expansion-panel-header>
-                {{note.name}}
-              </mat-expansion-panel-header>
-              <p class="note-content" [innerText]="note.value"></p>
-              <mat-action-row>
-                <button mat-icon-button matTooltip="Delete note" (click)="deleteNote(note.name, note.value)"><mat-icon>delete</mat-icon></button>
-                <button mat-icon-button matTooltip="Edit note" (click)="editNoteDialog(note.name, note.value)"><mat-icon>edit</mat-icon></button>
-              </mat-action-row>
-            </mat-expansion-panel>
-          }
-        </mat-accordion>
-        @if (file.notesMapArray.length < 1) {
-          <mat-card>
-            <mat-card-content>No Notes</mat-card-content>
-          </mat-card>
-        }
-      </div>
-    }
+    
+    <!-- Tags -->
     @if (file.displayTags) {
       <div class="tags-section">
         <div class="sec-header">
@@ -244,6 +223,34 @@
         }
       </div>
     }
+    <!-- Notes -->
+    <!-- @if (file.notesMapArray) {
+      <div class="notes-section">
+        <div class="sec-header">
+          <h3 class="mat-subheading-2">Notes</h3>
+          <button mat-icon-button (click)="addNoteDialog()" matTooltip="Add note"><mat-icon>note_add</mat-icon></button>
+        </div>
+        <mat-accordion multi>
+          @for (note of file.notesMapArray; track note.name) {
+            <mat-expansion-panel >
+              <mat-expansion-panel-header>
+                {{note.name}}
+              </mat-expansion-panel-header>
+              <p class="note-content" [innerText]="note.value"></p>
+              <mat-action-row>
+                <button mat-icon-button matTooltip="Delete note" (click)="deleteNote(note.name, note.value)"><mat-icon>delete</mat-icon></button>
+                <button mat-icon-button matTooltip="Edit note" (click)="editNoteDialog(note.name, note.value)"><mat-icon>edit</mat-icon></button>
+              </mat-action-row>
+            </mat-expansion-panel>
+          }
+        </mat-accordion>
+        @if (file.notesMapArray.length < 1) {
+          <mat-card>
+            <mat-card-content>No Notes</mat-card-content>
+          </mat-card>
+        }
+      </div>
+    } -->
   </div>
 } @else {
   <mat-spinner></mat-spinner>

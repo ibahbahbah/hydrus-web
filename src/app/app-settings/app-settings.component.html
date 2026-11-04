@@ -34,8 +34,23 @@
         }
       </mat-select>
     </mat-form-field>
+    <h2 class="mat-headline-6">Tap and Hold (Photoswipe)</h2>
+    <app-tag-input formControlName="quickTags" [enableFavorites]="false" [enableOrSearch]="false" [enableSiblingParentsDialog]="false" [enableSystemPredicates]="false" placeholder="Quick tags" class=""></app-tag-input>
+    <mat-form-field appearance="outline">
+      <mat-label>Quick Tag Service</mat-label>
+      <mat-select formControlName="quickTagServiceKey">
+        <mat-option>None (disabled)</mat-option>
+        @for (service of (apiSettings.apiSet() ? (tagServices$ | async) : []); track service.service_key) {
+          <mat-option [value]="service.service_key">
+            {{service.name}}
+          </mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
     <h2 class="mat-headline-6">File Viewing</h2>
     <mat-slide-toggle color="primary" formControlName="mediaAutoplay" class="margin-bottom-16">Autoplay video and audio files</mat-slide-toggle>
+    <mat-slide-toggle color="primary" formControlName="mediaAutoFullscreen" class="margin-bottom-16">Auto Fullscreen video files</mat-slide-toggle>
+    <mat-slide-toggle color="primary" formControlName="mediaControls" class="margin-bottom-16">Show video and audio controls</mat-slide-toggle>
     <mat-slide-toggle color="primary" formControlName="mediaLoop" class="margin-bottom-16">Loop video and audio files</mat-slide-toggle>
     <mat-slide-toggle color="primary" formControlName="mediaDefaultMuted" class="margin-bottom-16">Video and audio files start muted</mat-slide-toggle>
     <mat-slide-toggle color="primary" formControlName="sendViews" class="margin-bottom-16">Submit views and view durations to Hydrus</mat-slide-toggle>

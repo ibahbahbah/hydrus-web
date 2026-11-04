@@ -1,13 +1,17 @@
-import { ApplicationRef, EnvironmentInjector, Injectable, createComponent } from '@angular/core';
-import { HydrusBasicFile, FileCategory } from './hydrus-file';
+import { ApplicationRef, EnvironmentInjector, Injectable, createComponent, ComponentRef } from '@angular/core';
+import { HydrusBasicFile, FileCategory, TagStatus } from './hydrus-file';
 import PhotoSwipe, { PhotoSwipeOptions, SlideData } from 'photoswipe';
 import { Platform } from '@angular/cdk/platform';
 import Content from 'photoswipe/dist/types/slide/content';
 import Slide from 'photoswipe/dist/types/slide/slide';
 import { MatBottomSheet } from '@angular/material/bottom-sheet';
+import { MatDialog, MatDialogRef } from '@angular/material/dialog';
 import { FileInfoSheetComponent } from './file-info-sheet/file-info-sheet.component';
+import { TagInputDialogComponent } from './tag-input-dialog/tag-input-dialog.component';
+import { QuickTagDialogComponent } from './quick-tag-dialog/quick-tag-dialog.component';
+import { HydrusSearchTags } from './hydrus-tags';
 import { Location } from '@angular/common';
-import { firstValueFrom, map, take } from 'rxjs';
+import { firstValueFrom, map, take, of, catchError, shareReplay } from 'rxjs';
 import { canOpenInPhotopea, getPhotopeaUrlForFile } from './photopea';
 import { SettingsService } from './settings.service';
 import { MatButton } from '@angular/material/button';
@@ -20,10 +24,16 @@ import { HydrusRatingsService } from './hydrus-ratings.service';
 import { HydrusServiceType } from './hydrus-services';
 import { HydrusFilesService } from './hydrus-files.service';
 import { HydrusFileDownloadService } from './hydrus-file-download.service';
+import { serializeError } from 'serialize-error';
 
 
 function isContentType(content: Content | Slide, type: string) {
   return (content && content.data && content.data.type === type);
+}
+
+function flattenSearchTags(tags: HydrusSearchTags): string[] {
+  const flat = tags.flatMap(tag => typeof tag === 'string' ? [tag] : flattenSearchTags(tag));
+  return Array.from(new Set(flat.filter(tag => tag.trim().length > 0)));
 }
 
 @Injectable({
@@ -33,6 +43,7 @@ export class PhotoswipeService {
   constructor(
     public platform: Platform,
     private bottomSheet: MatBottomSheet,
+    private dialog: MatDialog,
     private location: Location,
     private settingsService: SettingsService,
     private appRef: ApplicationRef,
@@ -47,7 +58,7 @@ export class PhotoswipeService {
     private downloadService: HydrusFileDownloadService,
   ) { }
 
-  
+  private readonly contentComponentRefs = new WeakMap<Content, ComponentRef<MatButton>[]>();
 
   // For some reason adding this fixes the issue of the icon ordering bug
   likeService$ = this.ratingsService.ratingServices$.pipe(
@@ -55,12 +66,109 @@ export class PhotoswipeService {
     map(services => services.find(service => 
       service.type === HydrusServiceType.LOCAL_RATING_LIKE || 
       service.type === HydrusServiceType.RATING_LIKE_REPOSITORY
-    ))
+    )),
+    catchError(() => of(undefined)),
+    shareReplay({ bufferSize: 1, refCount: false }),
   ).subscribe()
 
-  private processedFiles = new Map<string, SlideData>();
+  private static readonly MAX_PROCESSED_FILES = 100;
+  private readonly processedFiles = new Map<string, SlideData>();
+
+  private cacheProcessedFile(hash: string, slideData: SlideData) {
+    // Refresh insertion order so this behaves like an LRU.
+    this.processedFiles.delete(hash);
+    this.processedFiles.set(hash, slideData);
+
+    while (this.processedFiles.size > PhotoswipeService.MAX_PROCESSED_FILES) {
+      const oldestKey = this.processedFiles.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.processedFiles.delete(oldestKey);
+    }
+  }
+
+  private activePhotoSwipe?: PhotoSwipe;
+  private pswpHistoryId = 0;
+
+  private overlayOpen = false;
+  private quickTagDialogRef?: MatDialogRef<QuickTagDialogComponent>;
+
+  private async openQuickTagDialog(pswp: PhotoSwipe) {
+    if (this.overlayOpen) {
+      return;
+    }
+
+    const file = pswp.currSlide?.data.file as HydrusBasicFile | undefined;
+    if (!file) {
+      return;
+    }
+
+    const { quickTags, quickTagServiceKey } = this.settingsService.appSettings;
+    const tags = flattenSearchTags(quickTags);
+
+    if (!quickTagServiceKey || tags.length === 0) {
+      this.snackbar.open('Set up quick tags in Settings first.', undefined, {
+        duration: 3000
+      });
+      return;
+    }
+
+    this.overlayOpen = true;
+
+    let existingTags: string[] = [];
+    try {
+      const metadata = await firstValueFrom(this.filesService.getFileByHash(file.hash));
+      existingTags = metadata.tags?.[quickTagServiceKey]?.storage_tags?.[TagStatus.Current] ?? [];
+    } catch (error) {
+      this.overlayOpen = false;
+      this.errorService.handleHydrusError(error, 'Error loading file tags');
+      return;
+    }
+
+    // The gallery may have been closed while the metadata request was in flight.
+    if (this.activePhotoSwipe !== pswp) {
+      this.overlayOpen = false;
+      return;
+    }
+
+    const dialogRef = QuickTagDialogComponent.open(this.dialog, file, tags, quickTagServiceKey, existingTags);
+    this.quickTagDialogRef = dialogRef;
+    dialogRef.afterClosed().subscribe(() => {
+      this.overlayOpen = false;
+      if (this.quickTagDialogRef === dialogRef) {
+        this.quickTagDialogRef = undefined;
+      }
+    });
+  }
 
   openPhotoSwipe(items: HydrusBasicFile[], id: number) {
+    if (this.activePhotoSwipe) {
+      return; // one gallery at a time
+    }
+
+    //
+    let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+    let isPressing = false;           // flag to avoid double triggers
+    let longPressFired = false;       // hold threshold reached
+    let suppressTap = false;          // suppress the tap that follows a hold
+    let startX = 0;                   // track movement distance
+    let startY = 0;                   // track movement distance
+    const HOLD_DURATION = 450;        // milliseconds
+    // const MOVE_THRESHOLD = 10;        // pixels – cancel if finger slides
+    const MOVE_THRESHOLD_SQUARED = 10 * 10;
+
+    const cancelLongPressTimer = () => {
+      if (longPressTimer !== null) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    };
+
+    const cancelLongPress = () => {
+      cancelLongPressTimer();
+      isPressing = false;
+      longPressFired = false;
+    };
+    
     let viewStartTimestamp = Date.now();
     let lastFile: HydrusBasicFile | undefined;
 
@@ -78,10 +186,16 @@ export class PhotoswipeService {
 
     this.themeService.addBlackThemeColorMetaTag();
 
-    const imgindex = items.findIndex(e => e.file_id === id);
+    const files = items.slice(); 
+    const index = files.findIndex(file => file.file_id === id);
+
+    if (index === -1) {
+      return;
+    }
 
     const options: PhotoSwipeOptions = {
-      index: imgindex,
+      index,
+      dataSource: files,
       bgOpacity: 1,
       clickToCloseNonZoomable: false,
       showHideAnimationType: 'none',
@@ -92,22 +206,15 @@ export class PhotoswipeService {
       maxZoomLevel: 2,
       errorMsg: 'The file cannot be loaded',
       trapFocus: false,
-      // imageClickAction: false,
-      // tapAction: false, // Disable default tap action
+      preload: [1, 1], // [n, m] Preloads n images after current one and m images after next one. (based on moved direction)
     }
 
+    
     const pswp = new PhotoSwipe(options);
 
-    pswp.addFilter('numItems', numItems => {
-      return items.length;
-    })
-
-    pswp.addFilter('itemData', (itemData, index) => {
-      const file = items[index];
-      if(this.processedFiles.has(file.hash)) {
-        return this.processedFiles.get(file.hash);
-      }
-      return this.getPhotoSwipeItem(items[index]);
+    pswp.addFilter('itemData', itemData => {
+      const file = itemData as HydrusBasicFile;
+      return this.processedFiles.get(file.hash) ?? this.getPhotoSwipeItem(file);
     });
 
     pswp.on('wheel', (e) => {
@@ -123,8 +230,65 @@ export class PhotoswipeService {
       }
     });
 
+    // -- Long Press Action --------------------
+    pswp.on('pointerDown', (e) => {
+      const target = e.originalEvent.target as HTMLElement | null;
+      // Don't trigger from toolbar buttons, video controls, links, etc.
+      if (target?.closest('.pswp__ui, .pswp__button, button, a, input, select, textarea, video, audio')) {
+        return;
+      }
+
+      cancelLongPress();
+      suppressTap = false;
+      startX = e.originalEvent.clientX;
+      startY = e.originalEvent.clientY;
+      isPressing = true;
+
+      longPressTimer = setTimeout(() => {
+        if (!isPressing) return;
+        
+        longPressFired = true;
+        longPressTimer = null;
+        navigator.vibrate?.(10);
+
+        suppressTap = true;
+        this.openQuickTagDialog(pswp);
+      
+      }, HOLD_DURATION);
+
+    });
+
+    // -- Cancel Long Press Action on Move --------------------
+    pswp.on('pointerMove', (e) => {
+      if (!isPressing) return;
+
+      const dx = e.originalEvent.x - startX;
+      const dy = e.originalEvent.y - startY;
+
+      if (dx * dx + dy * dy > MOVE_THRESHOLD_SQUARED) {
+        cancelLongPress();
+      }
+
+    });
+
+    // -- Open Quick Tags on Lift after a Hold --------------------
+    pswp.on('pointerUp', () => {
+      const shouldOpenQuickTags = longPressFired;
+      cancelLongPress();
+
+      if (shouldOpenQuickTags) {
+        suppressTap = true;
+        this.openQuickTagDialog(pswp);
+      }
+    });
+
     pswp.on('tapAction', (e) => {
-      if(!pswp.currSlide.content.isImageContent()) {
+      if (suppressTap) {
+        suppressTap = false;
+        e.preventDefault();
+        return;
+      }
+      if(!pswp.currSlide?.content.isImageContent()) {
         e.preventDefault();
       }
     });
@@ -132,7 +296,7 @@ export class PhotoswipeService {
     pswp.on('doubleTapAction', async (e) => {
       // Double tap to add tag to current image
       e.preventDefault();
-      const file = pswp.currSlide.content.data.file as HydrusBasicFile;
+      const file = pswp.currSlide?.content.data.file as HydrusBasicFile;
       const tag = this.settingsService.appSettings.doubleTapTag[0].toString()
       const serviceKey = this.settingsService.appSettings.doubleTapServiceKey.toString()
       // console.log(file.hash, tag, serviceKey)
@@ -166,52 +330,58 @@ export class PhotoswipeService {
     });
 
     pswp.on('keydown', (e) => {
-      if (this.bottomSheet._openedBottomSheetRef) {
+      if (this.overlayOpen) {
         e.preventDefault();
       }
     });
 
+    const ratingCache = new Map<string, boolean>();
+
+    /*  */
     pswp.on('uiRegister', () => {
-      //
+
+      // like/favorite rating icon 
       this.ratingsService.ratingServices$.pipe(
         take(1),
         map(services => services.find(service => 
           service.type === HydrusServiceType.LOCAL_RATING_LIKE || 
           service.type === HydrusServiceType.RATING_LIKE_REPOSITORY
         ))
-      ).subscribe(likeService => { pswp.ui.registerElement({
+      ).subscribe(likeService => { pswp.ui?.registerElement({
           name: 'like-rating',
           order: 10, // Before download button
           isButton: true,
           tagName: 'button',
-          // html: '<span class="mat-icon material-icons">favorite_outline</span>',
           html: '<span class="mat-icon material-icons pswp__button--large pswp__icon--large">favorite_outline</span>', // Add large icon class
           onInit: (el, pswp) => {
             // Update icon when slide changes
             pswp.on('change', () => {
-              const file = pswp.currSlide.data.file as HydrusBasicFile;
-              this.updateLikeButtonState(file, likeService.service_key, el);
+              const file = pswp.currSlide?.data.file as HydrusBasicFile;
+              this.updateLikeButtonState(file, likeService.service_key, el, ratingCache);
             });
           },
           onClick: async (event, el, pswp) => {
-            const file = pswp.currSlide.data.file as HydrusBasicFile;
-            await this.toggleLikeRating(file, likeService, el);
+            const file = pswp.currSlide?.data.file as HydrusBasicFile;
+            await this.toggleLikeRating(file, likeService, el, ratingCache);
           }
         });
       });
 
-      pswp.ui.registerElement({
+      // info icon: opens file-info-sheet
+      pswp.ui?.registerElement({
         name: 'info',
         order: 15,
         isButton: true,
         tagName: 'button',
         html: '<span class="mat-icon material-icons">info_outlined</span>',
         onClick: (event, el, pswp) => {
-          const file = pswp.currSlide.data.file as HydrusBasicFile;
+          const file = pswp.currSlide?.data.file as HydrusBasicFile;
+          this.overlayOpen = true;
           FileInfoSheetComponent.open(this.bottomSheet, file)
             .afterDismissed()
             .pipe(take(1))
             .subscribe(res => {
+              this.overlayOpen = false;
               if(res) {
                 pswp.close();
               }
@@ -219,7 +389,8 @@ export class PhotoswipeService {
         }
       });
 
-      pswp.ui.registerElement({
+      // 
+      pswp.ui?.registerElement({
         name: 'custom-close',
         order: 20,
         isButton: true,
@@ -228,33 +399,36 @@ export class PhotoswipeService {
         onClick: 'close'
       });
 
-      pswp.ui.registerElement({
-        name: 'download',
-        order: 13,
-        isButton: true,
-        tagName: 'button',
-        html: '<span class="mat-icon material-icons">get_app</span>',
-        onClick: (event, el, pswp) => {
-          const file = pswp.currSlide.data.file as HydrusBasicFile;
-          this.downloadService.saveFile(file);
-        }
-      });
+      // //
+      // pswp.ui.registerElement({
+      //   name: 'download',
+      //   order: 13,
+      //   isButton: true,
+      //   tagName: 'button',
+      //   html: '<span class="mat-icon material-icons">get_app</span>',
+      //   onClick: (event, el, pswp) => {
+      //     const file = pswp.currSlide.data.file as HydrusBasicFile;
+      //     this.downloadService.saveFile(file);
+      //   }
+      // });
 
-      if(this.downloadService.canShare) {
-        pswp.ui.registerElement({
-          name: 'share',
-          order: 14,
-          isButton: true,
-          tagName: 'button',
-          html: '<span class="mat-icon material-icons">share</span>',
-          onClick: (event, el, pswp) => {
-            const file = pswp.currSlide.data.file as HydrusBasicFile;
-            this.downloadService.shareFile(file);
-          }
-        });
-      }
+      // //
+      // if(this.downloadService.canShare) {
+      //   pswp.ui.registerElement({
+      //     name: 'share',
+      //     order: 14,
+      //     isButton: true,
+      //     tagName: 'button',
+      //     html: '<span class="mat-icon material-icons">share</span>',
+      //     onClick: (event, el, pswp) => {
+      //       const file = pswp.currSlide.data.file as HydrusBasicFile;
+      //       this.downloadService.shareFile(file);
+      //     }
+      //   });
+      // }
 
-      pswp.ui.registerElement({
+      // 
+      pswp.ui?.registerElement({
         name: 'zoom-level-indicator',
         order: 6,
         className: 'pswp__zoom-level',
@@ -272,27 +446,47 @@ export class PhotoswipeService {
       });
     });
 
-    pswp.addFilter('uiElement', (element, data) => {
-      return element;
-    });
 
+    //
+    // pswp.addFilter('uiElement', (element, data) => {
+    //   return element;
+    // });
+
+    /**/
     pswp.on('contentLoad', (e) => {
       const { content, isLazy } = e;
       const file = content.data.file as HydrusBasicFile;
-
-      console.log(`Loaded Content: ${file.file_url}`)
+      // console.log(`Loaded Content: ${file.file_url}`)
 
       if (isContentType(content, 'video')) {
         e.preventDefault();
-
         content.state = 'loading';
 
         content.element = document.createElement('div');
         content.element.className = 'pswp-video-container';
-        const img = document.createElement('img');
-        img.src = file.thumbnail_url;
-        img.className = 'pswp-video-placeholder';
-        content.element.append(img);
+
+        const placeholder = document.createElement('img');
+        placeholder.src = file.thumbnail_url;
+        placeholder.className = 'pswp-video-placeholder';
+        content.element.append(placeholder);
+
+        const vid = document.createElement('video');
+        vid.className = 'pswp-video pswp-media';
+        vid.poster = file.thumbnail_url;
+        vid.controls = this.settingsService.appSettings.mediaControls;
+        vid.loop = this.settingsService.appSettings.mediaLoop;
+        vid.muted = this.settingsService.appSettings.mediaDefaultMuted;
+        vid.playsInline = true;
+        
+        vid.preload = isLazy ? 'none' : 'metadata';
+        
+        vid.addEventListener('loadedmetadata', () => content.onLoaded(), { once: true });
+        vid.addEventListener('error', () => content.onError(), { once: true });
+        
+        vid.src = file.file_url;
+        // const video = this.createVideoElement(file, content, isLazy);
+        content.element.prepend(vid);
+
       } else if (isContentType(content, 'audio')) {
         e.preventDefault();
 
@@ -321,7 +515,7 @@ export class PhotoswipeService {
 
         this.addRenderButton(file, errorMsgEl, pswp, content);
 
-        this.addPhotopeaButton(file, errorMsgEl);
+        this.addPhotopeaButton(file, errorMsgEl, content);
       } else if (isContentType(content, 'unsupported')) {
         e.preventDefault();
         content.element = document.createElement('div');
@@ -341,49 +535,93 @@ export class PhotoswipeService {
         errorMsgText.className = 'pswp-error-text';
         errorMsgEl.appendChild(errorMsgText);
 
-        this.addPhotopeaButton(file, errorMsgEl);
+        this.addPhotopeaButton(file, errorMsgEl, content);
       }
 
     });
 
     pswp.on('contentActivate', ({content}) => {
-      handleView(content.data.file);
+      handleView(content.data.file as HydrusBasicFile);
 
       const file = content.data.file as HydrusBasicFile;
-
-      console.log(`Loaded Content: ${file}`)
+      // console.log(`Loaded Content: ${file}`)
 
       if (isContentType(content, 'video') && content.element) {
-        const vid = document.createElement('video');
-        vid.src = file.file_url;
-        vid.autoplay = this.settingsService.appSettings.mediaAutoplay;
-        vid.controls = !this.platform.FIREFOX;
-        vid.poster = file.thumbnail_url;
-        vid.loop = this.settingsService.appSettings.mediaLoop;
-        vid.muted = this.settingsService.appSettings.mediaDefaultMuted;
-        vid.className = 'pswp-video pswp-media';
-        vid.onloadeddata = (e) => {
-          content.onLoaded();
+        let video = content.element.querySelector<HTMLVideoElement>('video.pswp-media');
+        
+        // Normally created in contentLoad so neighboring slides can preload.
+        // Recreate it if PhotoSwipe removed the slide from its DOM cache.
+        if (!video) {
+          content.state = 'loading';
+
+          video = document.createElement('video');
+          video.src = file.file_url;
+          video.poster = file.thumbnail_url;
+          video.controls = this.settingsService.appSettings.mediaControls;
+          video.loop = this.settingsService.appSettings.mediaLoop;
+          video.muted = this.settingsService.appSettings.mediaDefaultMuted;
+          video.playsInline = !this.settingsService.appSettings.mediaAutoFullscreen;
+          video.className = 'pswp-video pswp-media';
+
+          video.addEventListener('loadedmetadata', () => content.onLoaded(), { once: true });
+          video.addEventListener('error', () => content.onError(), { once: true });
+
+          // Do not set `autoplay` here: only the active slide should ever play.
+          content.element.prepend(video);
         }
-        vid.onerror = (e) => {
-          content.onError();
+
+        const activeVideo = video;
+
+        // Only the active slide buffers aggressively.
+        activeVideo.preload = 'auto';
+
+        if (activeVideo.readyState === HTMLMediaElement.HAVE_NOTHING) {
+          activeVideo.load();
         }
-        content.element.prepend(vid);
+
+        if (this.settingsService.appSettings.mediaAutoplay) {
+          activeVideo.play().catch(() => {
+            // Browsers block unmuted autoplay; retry muted so playback starts.
+            activeVideo.muted = true;
+            activeVideo.play().catch(() => {
+              // Leave the poster and native controls visible for a manual start.
+            });
+          });
+        }
       } else if (isContentType(content, 'audio') && content.element) {
-        const audio = document.createElement('audio');
-        audio.src = file.file_url;
-        audio.autoplay = this.settingsService.appSettings.mediaAutoplay;
-        audio.loop = this.settingsService.appSettings.mediaLoop;
-        audio.muted = this.settingsService.appSettings.mediaDefaultMuted;
-        audio.controls = true;
-        audio.className = 'pswp-audio pswp-media';
-        audio.onloadeddata = (e) => {
-          content.onLoaded();
+        let audio = content.element.querySelector<HTMLAudioElement>('audio.pswp-media');
+        if (!audio) {
+          content.state = 'loading';
+
+          audio = document.createElement('audio');
+          audio.src = file.file_url;
+          audio.loop = this.settingsService.appSettings.mediaLoop;
+          audio.muted = this.settingsService.appSettings.mediaDefaultMuted;
+          audio.controls = true;
+          audio.className = 'pswp-audio pswp-media';
+
+          audio.addEventListener('loadedmetadata', () => content.onLoaded(), { once: true });
+          audio.addEventListener('error', () => content.onError(), { once: true });
+
+          content.element.prepend(audio);
         }
-        audio.onerror = (e) => {
-          content.onError();
+
+        const activeAudio = audio;
+
+        activeAudio.preload = 'auto';
+
+        if (activeAudio.readyState === HTMLMediaElement.HAVE_NOTHING) {
+          activeAudio.load();
+        }  
+
+        if (this.settingsService.appSettings.mediaAutoplay) {
+          activeAudio.play().catch(() => {
+            activeAudio.muted = true;
+            activeAudio.play().catch(() => {
+              // Leave controls visible for a manual start.
+            });
+          });
         }
-        content.element.prepend(audio);
       }
     });
 
@@ -393,7 +631,7 @@ export class PhotoswipeService {
 
       const errorMsgEl = document.createElement('div');
       errorMsgEl.className = 'pswp__error-msg';
-      content.element.appendChild(errorMsgEl);
+      content.element?.appendChild(errorMsgEl);
 
       const img = document.createElement('img');
       img.src = file.thumbnail_url;
@@ -412,14 +650,26 @@ export class PhotoswipeService {
       return errorMsgEl;
     });
 
-    pswp.on('appendHeavy', (e) => {
+    // pswp.on('appendHeavy', (e) => {
 
+    // });
+
+    // pswp.on('contentAppend', (e) => {
+
+    // });
+    
+    // Keep the element and buffer alive
+    const pauseMedia = (content: Content) => {
+      content.element
+      ?.querySelectorAll<HTMLMediaElement>('.pswp-media')
+      .forEach(media => media.pause());
+    };
+    
+    pswp.on('contentDeactivate', ({content}) => {
+      pauseMedia(content);
     });
-
-    pswp.on('contentAppend', (e) => {
-
-    });
-
+    
+    // 
     const handleDestroyMedia = (content: Content) => {
       if ((isContentType(content, 'video') || isContentType(content, 'audio')) && content.element) {
         content.element.querySelectorAll<HTMLMediaElement>('.pswp-media').forEach(media => {
@@ -430,44 +680,55 @@ export class PhotoswipeService {
         })
       }
     }
-
-    pswp.on('contentDeactivate', ({content}) => {
-      handleDestroyMedia(content);
-    });
-
+    
     pswp.on('contentRemove', ({content}) => {
       handleDestroyMedia(content);
     });
-
-    /* pswp.on('contentDestroy', ({content}) => {
-
-    }); */
-
-    const locSub = this.location.subscribe(e => {
-      pswp.close();
+    
+    pswp.on('contentDestroy', ({content}) => {
+      this.destroyContentComponents(content);
     });
 
-    pswp.on('close', () => {
+    const historyId = ++this.pswpHistoryId;
+    const locSub = this.location.subscribe(() => pswp.close());
+
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+
+      cancelLongPress();
+      this.overlayOpen = false;
+      this.quickTagDialogRef?.close();
       handleView();
-      handleDestroyMedia(pswp.currSlide.content);
       this.themeService.removeBlackThemeColorMetaTag();
       locSub.unsubscribe();
-      if(window.history.state.pswp) {
+
+      if (this.activePhotoSwipe === pswp) {
+        this.activePhotoSwipe = undefined;
+      }
+    };
+
+    pswp.on('close', () => {
+      cleanup();
+    });
+    
+    pswp.on('destroy', cleanup)
+
+    window.history.pushState({ pswpId: historyId }, '');
+    this.activePhotoSwipe = pswp;
+
+    try {
+      pswp.init();
+    } catch (error) {
+      cleanup();
+      if (window.history.state?.pswpId === historyId) {
         window.history.back();
       }
-    });
+      throw error;
+    }
 
-    /* pswp.on('destroy', () => {
-
-    }); */
-
-    //this.location.go(this.location.path() + '#pswp');
-    window.history.pushState({pswp: true}, '');
-
-    pswp.init();
   }
-
-
 
   getPhotoSwipeItem(file: HydrusBasicFile): SlideData {
 
@@ -485,6 +746,9 @@ export class PhotoswipeService {
         return {
           file,
           type: 'video',
+          width: file.width,
+          height: file.height,
+          msrc: file.thumbnail_url,
         };
       }
       case FileCategory.Audio: {
@@ -510,7 +774,28 @@ export class PhotoswipeService {
     }
   }
 
-  private addPhotopeaButton(file: HydrusBasicFile, element: HTMLElement) {
+  private trackContentComponent(content: Content, ref: ComponentRef<MatButton>) {
+    const refs = this.contentComponentRefs.get(content);
+    if (refs) {
+      refs.push(ref);
+    } else {
+      this.contentComponentRefs.set(content, [ref]);
+    }
+    this.appRef.attachView(ref.hostView);
+  }
+
+  private destroyContentComponents(content: Content) {
+    const refs = this.contentComponentRefs.get(content);
+    if (!refs) return;
+
+    for (const ref of refs) {
+      this.appRef.detachView(ref.hostView);
+      ref.destroy();
+    }
+    this.contentComponentRefs.delete(content);
+  }
+
+  private addPhotopeaButton(file: HydrusBasicFile, element: HTMLElement, content: Content) {
     if(canOpenInPhotopea(file) && this.settingsService.appSettings.photopeaIntegration) {
       const photopeaButton = document.createElement('a');
       photopeaButton.setAttribute('mat-stroked-button', '');
@@ -530,7 +815,8 @@ export class PhotoswipeService {
       element.appendChild(buttonContainer);
       buttonContainer.appendChild(photopeaButton);
 
-      this.appRef.attachView(photopeaButtonComponent.hostView);
+      // this.appRef.attachView(photopeaButtonComponent.hostView);
+      this.trackContentComponent(content, photopeaButtonComponent);
     }
   }
 
@@ -549,6 +835,7 @@ export class PhotoswipeService {
       buttonContainer.className = 'pswp-error-text';
       element.appendChild(buttonContainer);
       buttonContainer.appendChild(renderButton);
+      
       this.appRef.attachView(psdButtonComponent.hostView);
 
       renderButton.addEventListener('click', async (ev) => {
@@ -561,7 +848,7 @@ export class PhotoswipeService {
           height: file.height,
           file
         }
-        this.processedFiles.set(file.hash, data);
+        this.cacheProcessedFile(file.hash, data);
         pswp.refreshSlideContent(content.index);
       })
   }
@@ -582,57 +869,104 @@ export class PhotoswipeService {
     }
   }
 
-  private async toggleLikeRating(file: HydrusBasicFile, likeService: { service_key: string }, buttonElement?) {
+  private async toggleLikeRating(
+    file: HydrusBasicFile,
+    likeService: { service_key: string },
+    buttonElement: HTMLElement,
+    cache: Map<string, boolean>,
+  ) {
     try {
-      // Get current rating state
-      const currentRating = await this.getCurrentRating(file, likeService.service_key);
+      const currentRating =
+        cache.get(file.hash) ??
+        await this.getCurrentRating(file, likeService.service_key);
+
       const newRating = currentRating ? null : true;
-      
-      // Update rating in backend
-      await firstValueFrom(this.ratingsService.setRating(file.hash, likeService.service_key, newRating));
-      
-      // Show feedback message
+
+      await firstValueFrom(
+        this.ratingsService.setRating(file.hash, likeService.service_key, newRating),
+      );
+
+      const liked = newRating === true;
+      cache.set(file.hash, liked);
+      this.setLikeIcon(buttonElement, liked);
+
       this.snackbar.open(
         newRating ? 'Added to favorites' : 'Removed from favorites',
         undefined,
         { duration: 1000 }
       );
 
-      // Update button icon if it exists
-      if (buttonElement) {
-        const icon = buttonElement.querySelector('.mat-icon');
-        if (icon) {
-          icon.textContent = newRating ? 'favorite' : 'favorite_outline';
-        }
-      }
-      return newRating;
     } catch (error) {
       this.errorService.handleHydrusError(error);
-      return null;
-    }
-}
-
-  private async updateLikeButtonState(file: HydrusBasicFile, serviceKey: string, buttonElement: HTMLElement) {
-    try {
-      const icon = buttonElement.querySelector('.mat-icon');
-      if (!icon) return;
-
-      // Show loading state
-      icon.textContent = 'sync';
-      
-      const isLiked = await this.getCurrentRating(file, serviceKey);
-      
-      // Update icon only if element still exists
-      if (buttonElement.isConnected) {
-        icon.textContent = isLiked ? 'favorite' : 'favorite_outline';
-      }
-    } catch (error) {
-      this.errorService.handleHydrusError(error);
-      // Set to default state on error
-      const icon = buttonElement.querySelector('.mat-icon');
-      if (icon && buttonElement.isConnected) {
-        icon.textContent = 'favorite_outline';
-      }
     }
   }
+
+  private likeRequestId = 0;
+
+  private setLikeIcon(buttonElement: HTMLElement, liked: boolean) {
+    const icon = buttonElement.querySelector('.mat-icon');
+    const next = liked ? 'favorite' : 'favorite_outline';
+    if (icon && icon.textContent !== next) {
+      icon.textContent = next;
+    }
+  }
+
+  private async updateLikeButtonState(
+    file: HydrusBasicFile,
+    serviceKey: string,
+    buttonElement: HTMLElement,
+    cache: Map<string, boolean>,
+  ) {
+    const icon = buttonElement.querySelector('.mat-icon');
+    if (!icon) return;
+
+    const cached = cache.get(file.hash);
+    if (cached !== undefined) {
+      this.setLikeIcon(buttonElement, cached);
+      return;
+    }
+
+    icon.textContent = 'sync';
+
+    const requestId = ++this.likeRequestId;
+    const isLiked = await this.getCurrentRating(file, serviceKey);
+
+    // Ignore stale responses and elements removed by PhotoSwipe.
+    if (requestId !== this.likeRequestId || !buttonElement.isConnected) {
+      return;
+    }
+
+    cache.set(file.hash, isLiked);
+    this.setLikeIcon(buttonElement, isLiked);
+  }
+
+  private createVideoElement(
+    file: HydrusBasicFile,
+    content: Content,
+    isLazy: boolean,
+  ): HTMLVideoElement {
+    const settings = this.settingsService.appSettings;
+
+    const video = document.createElement('video');
+    video.className = 'pswp-video pswp-media';
+    video.poster = file.thumbnail_url;
+    video.controls = settings.mediaControls;
+    video.loop = settings.mediaLoop;
+    video.muted = settings.mediaDefaultMuted;
+    video.playsInline = !settings.mediaAutoFullscreen;
+    video.preload = isLazy ? 'none' : 'metadata';
+
+    // Only the active/non-lazy slide gets a src. The activate handler adds it later.
+    if (!isLazy) {
+      video.src = file.file_url;
+    }
+
+    video.addEventListener('loadedmetadata', () => content.onLoaded(), { once: true });
+    video.addEventListener('error', () => content.onError(), { once: true });
+
+    return video;
+  }
+
+
+
 }

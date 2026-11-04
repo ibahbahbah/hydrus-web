@@ -98,6 +98,7 @@ import { MatContextMenuTriggerDirective } from "./mat-context-menu-trigger";
 import { ImageListItemComponent } from './image-list-item/image-list-item.component';
 import { ConfirmDialogComponent } from './confirm-dialog/confirm-dialog.component';
 import { FileContextMenuActionsComponent } from './file-context-menu-actions/file-context-menu-actions.component';
+import { QuickTagDialogComponent } from './quick-tag-dialog/quick-tag-dialog.component';
 
 
 const MAT_MODULES = [
@@ -177,6 +178,7 @@ const MAT_MODULES = [
     ImageListItemComponent,
     ConfirmDialogComponent,
     FileContextMenuActionsComponent,
+    QuickTagDialogComponent,
   ],
   bootstrap: [AppComponent],
   imports: [

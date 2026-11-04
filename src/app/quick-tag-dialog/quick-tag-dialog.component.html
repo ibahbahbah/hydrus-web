@@ -1,0 +1,29 @@
+<h2 mat-dialog-title class="quick-tag-title">
+  <span>Quick tags</span>
+  <button mat-icon-button mat-dialog-close aria-label="Close quick tags">
+    <mat-icon>close</mat-icon>
+  </button>
+</h2>
+
+<mat-dialog-content class="quick-tag-content">
+  <p class="quick-tag-subtitle">Tap a tag to add or remove it from this file</p>
+
+  @if (tags.length > 0) {
+    <div class="quick-tag-list">
+      @for (tag of tags; track tag) {
+        <button
+          mat-stroked-button
+          class="quick-tag-button"
+          [color]="wasAdded(tag) ? 'primary' : undefined"
+          [disabled]="isBusy(tag)"
+          (click)="toggleTag(tag)"
+        >
+          <mat-icon>{{ isBusy(tag) ? 'sync' : wasAdded(tag) ? 'check' : 'add' }}</mat-icon>
+          <span class="quick-tag-label">{{ tag }}</span>
+        </button>
+      }
+    </div>
+  } @else {
+    <p class="quick-tag-empty">No quick tags configured. Add some in Settings.</p>
+  }
+</mat-dialog-content>

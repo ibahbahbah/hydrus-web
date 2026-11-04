@@ -18,6 +18,8 @@ export interface AppSettingsV1 {
   sendFixDiscordUrls: boolean;
   uploadFilenameTagService: string;
   mediaAutoplay: boolean;
+  mediaAutoFullscreen: boolean;
+  mediaControls: boolean;
   mediaLoop: boolean;
   mediaDefaultMuted: boolean;
   themeEnabled: boolean;
@@ -26,6 +28,8 @@ export interface AppSettingsV1 {
   sendViews: boolean;
   doubleTapTag: HydrusSearchTags;
   doubleTapServiceKey: string;
+  quickTags: HydrusSearchTags;
+  quickTagServiceKey: string;
 }
 
 export type AppSettingsStorage = AppSettingsV1;
@@ -34,8 +38,19 @@ export type AppSettings = Omit<AppSettingsStorage, "version">;
 export const defaultAppSettings: AppSettings = {
   browseSearchOnLoad: true,
   browseSearchWhenEmpty: true,
-  browseDefaultSearchTags: ["system:limit is 200"],
-  favoriteTags: ["system:rating for favourites is like", "system:no rating for favourites", "system:ratio is portrait"],
+  browseDefaultSearchTags: ["system:limit is 256"],
+  // favoriteTags: ["system:rating for favourites is like", "system:no rating for favourites", "system:ratio is portrait"],
+  favoriteTags: [
+    "system:ratio taller than 4:3", 
+    "system:ratio taller than 3:2", 
+    "system:filetype is image", 
+    "system:filetype is video", 
+    "system:filetype is animation", 
+    "system:ratio is portrait",
+    "rating:like",
+    "rating:like like",
+    "rating:favourite",
+  ],
   hyshareUrl: '',
   saucenaoApiKey: '',
   saucenaoSearchProxy: '/__saucenao-search',
@@ -46,12 +61,16 @@ export const defaultAppSettings: AppSettings = {
   sendFixDiscordUrls: false,
   uploadFilenameTagService: '',
   mediaAutoplay: true,
+  mediaAutoFullscreen: true,
+  mediaControls: false,
   mediaLoop: true,
   mediaDefaultMuted: false,
   themeEnabled: false,
   themeColor: '#3f51b5',
   themeVariant: SettingsThemeVariant.DEFAULT,
   sendViews: true,
-  doubleTapTag: ['i like'],
+  doubleTapTag: ['rating:like'],
   doubleTapServiceKey: '',
+  quickTags: [],
+  quickTagServiceKey: '',
 }

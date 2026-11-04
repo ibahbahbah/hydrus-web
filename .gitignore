@@ -35,16 +35,16 @@ speed-measure-plugin.json
 /.backup
 /.angular/cache
 /.sass-cache
+/typings
 /connect.lock
 /coverage
 /libpeerconnection.log
-opencode.jsonc
-FOO.md
 npm-debug.log
 yarn-error.log
 testem.log
-/typings
 compose.yml
+opencode.jsonc
+
 
 # System Files
 .DS_Store

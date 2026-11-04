@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "qwen/qwen2.5-coder",
+  "permissions": [
+    { "action": "shell", "resource": "Get-Item *", "effect": "allow" },
+    { "action": "shell", "resource": "Get-ChildItem *", "effect": "allow" },
+    { "action": "shell", "resource": "Get-Content *", "effect": "allow" },
+    { "action": "shell", "resource": "Select-String *", "effect": "allow" },
+    { "action": "shell", "resource": "git *", "effect": "ask" },
+    { "action": "external_directory", "resource": "*", "effect": "ask" },
+    { "action": "read", "resource": "./.backup/*", "effect": "deny" },
+    { "action": "edit", "resource": "*", "effect": "ask" },
+  ]
+}

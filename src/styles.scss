@@ -15,7 +15,12 @@
 @import 'photoswipe/dist/photoswipe.css';
 
 .pswp {
-  --pswp-root-z-index: 1000
+  --pswp-root-z-index: 1000;
+
+  // Prevent iOS long-press text selection / callout while holding to open quick tags.
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .pswp-video-container {
@@ -109,10 +114,14 @@
 .quick-tag-dialog {
   .mat-mdc-dialog-surface {
     overflow: hidden;
+    // Keep the photo visible behind the quick tag popup.
+    background-color: color-mix(in srgb, var(--sys-surface-container-low) 60%, transparent);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
   }
   .mat-mdc-dialog-content {
     min-height: 0;
-    max-height: none;
+    max-height: min-content;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
   }

@@ -47,8 +47,7 @@ export class QuickTagDialogComponent {
       data: { file, tags, serviceKey, existingTags },
       width: '360px',
       maxWidth: '90vw',
-      height: '70vh',
-      maxHeight: '520px',
+      maxHeight: 'min(70vh, 520px)',
       closeOnNavigation: true,
       panelClass: 'quick-tag-dialog',
     });

@@ -327,6 +327,16 @@ export class PhotoswipeService {
           pswp.close();
         }
       };
+
+      // iOS Safari starts text selection / the image callout when holding a
+      // finger down, which conflicts with the hold-to-open-quick-tags gesture.
+      const isAppleTouchDevice = /iP(hone|ad|od)/.test(navigator.userAgent)
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (isAppleTouchDevice) {
+        const preventLongPressSelection = (event: Event) => event.preventDefault();
+        pswp.element?.addEventListener('selectstart', preventLongPressSelection);
+        pswp.element?.addEventListener('contextmenu', preventLongPressSelection);
+      }
     });
 
     pswp.on('keydown', (e) => {

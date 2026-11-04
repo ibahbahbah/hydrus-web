@@ -39,11 +39,11 @@ speed-measure-plugin.json
 /connect.lock
 /coverage
 /libpeerconnection.log
+/opencode.jsonc
 npm-debug.log
 yarn-error.log
 testem.log
 compose.yml
-opencode.jsonc
 
 
 # System Files
